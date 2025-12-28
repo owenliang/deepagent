@@ -1,4 +1,5 @@
 """Middleware for providing filesystem tools to an agent."""
+# 文件系统中间件：为 Agent 提供 ls/read/write/edit/grep/execute 等工具能力
 # ruff: noqa: E501
 
 import os
@@ -57,6 +58,7 @@ class FileData(TypedDict):
 
 
 def _file_data_reducer(left: dict[str, FileData] | None, right: dict[str, FileData | None]) -> dict[str, FileData]:
+    # 合并 files 字典的 reducer：right 按路径覆盖 left，值为 None 表示删除该文件
     """Merge file updates with support for deletions.
 
     This reducer enables file deletion by treating `None` values in the right
@@ -152,10 +154,12 @@ def _validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) 
 class FilesystemState(AgentState):
     """State for the filesystem middleware."""
 
+    # files 字段保存虚拟文件系统的内容，使用 _file_data_reducer 做增量合并和删除
     files: Annotated[NotRequired[dict[str, FileData]], _file_data_reducer]
     """Files in the filesystem."""
 
 
+# list_files 提示词：强调 path 必须是绝对路径，先列目录再读/改文件，适合作为探索入口
 LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the filesystem, filtering by directory.
 
 Usage:
@@ -164,6 +168,7 @@ Usage:
 - This is very useful for exploring the file system and finding the right file to read or edit.
 - You should almost ALWAYS use this tool before using the Read or Edit tools."""
 
+# read_file 提示词：说明按 offset/limit 分段读取大文件，避免一次性读完导致上下文溢出
 READ_FILE_TOOL_DESCRIPTION = """Reads a file from the filesystem. You can access any file directly by using this tool.
 Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
@@ -181,6 +186,7 @@ Usage:
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
 - You should ALWAYS make sure a file has been read before editing it."""
 
+# edit_file 提示词：强制先 read 再 edit，并要求 old_string 精确唯一或配合 replace_all 使用
 EDIT_FILE_TOOL_DESCRIPTION = """Performs exact string replacements in files.
 
 Usage:
@@ -192,6 +198,7 @@ Usage:
 - Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
 
 
+# write_file 提示词：用于新建文件，仍建议优先编辑已有文件
 WRITE_FILE_TOOL_DESCRIPTION = """Writes to a new file in the filesystem.
 
 Usage:
@@ -201,6 +208,7 @@ Usage:
 - Prefer to edit existing files over creating new ones when possible."""
 
 
+# glob 提示词：说明如何用通配符在虚拟文件系统中查找符合模式的文件
 GLOB_TOOL_DESCRIPTION = """Find files matching a glob pattern.
 
 Usage:
@@ -214,6 +222,7 @@ Examples:
 - `*.txt` - Find all text files in root
 - `/subdir/**/*.md` - Find all markdown files under /subdir"""
 
+# grep 提示词：描述三种输出模式（文件列表/匹配内容/匹配计数），适合配合 glob 做全文搜索
 GREP_TOOL_DESCRIPTION = """Search for a pattern in files.
 
 Usage:
@@ -231,6 +240,7 @@ Examples:
 - Search Python files only: `grep(pattern="import", glob="*.py")`
 - Show matching lines: `grep(pattern="error", output_mode="content")`"""
 
+# execute 提示词：强调必须用绝对路径与工具代替 shell 自带命令，并提醒输出可能被截断
 EXECUTE_TOOL_DESCRIPTION = """Executes a given command in the sandbox environment with proper handling and security measures.
 
 Before executing the command, please follow these steps:
@@ -275,6 +285,7 @@ Examples:
 Note: This tool is only available if the backend supports execution (SandboxBackendProtocol).
 If execution is not supported, the tool will return an error message."""
 
+# FILESYSTEM_SYSTEM_PROMPT：总述有哪些文件相关工具，以及路径必须以 / 开头
 FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`
 
 You have access to a filesystem which you can interact with using these tools.
@@ -287,6 +298,7 @@ All file paths must start with a /.
 - glob: find files matching a pattern (e.g., "**/*.py")
 - grep: search for text within files"""
 
+# EXECUTION_SYSTEM_PROMPT：补充 execute 工具的能力和使用场景
 EXECUTION_SYSTEM_PROMPT = """## Execute Tool `execute`
 
 You have access to an `execute` tool for running shell commands in a sandboxed environment.
@@ -788,6 +800,7 @@ def _get_filesystem_tools(
     return tools
 
 
+# TOO_LARGE_TOOL_MSG：当工具输出过大时，把结果写入文件，仅返回路径和前若干行预览
 TOO_LARGE_TOOL_MSG = """Tool result too large, the result of this tool call {tool_call_id} was saved in the filesystem at this path: {file_path}
 You can read the result from the filesystem by using the read_file tool, but make sure to only read part of the result at a time.
 You can do this by specifying an offset and limit in the read_file tool call.
@@ -798,6 +811,7 @@ Here are the first 10 lines of the result:
 """
 
 
+# FilesystemMiddleware：给 Agent 注入文件系统相关工具，并在需要时把大工具结果落盘
 class FilesystemMiddleware(AgentMiddleware):
     """Middleware for providing filesystem and optional execution tools to an agent.
 
@@ -976,9 +990,10 @@ class FilesystemMiddleware(AgentMiddleware):
 
     def _process_large_message(
         self,
-        message: ToolMessage,
         resolved_backend: BackendProtocol,
+        message: ToolMessage,
     ) -> tuple[ToolMessage, dict[str, FileData] | None]:
+        # 将过大的 ToolMessage 内容写入虚拟文件，并返回带说明和预览片段的替代消息
         content = message.content
         if not isinstance(content, str) or len(content) <= 4 * self.tool_token_limit_before_evict:
             return message, None
@@ -1000,6 +1015,7 @@ class FilesystemMiddleware(AgentMiddleware):
         return processed_message, result.files_update
 
     def _intercept_large_tool_result(self, tool_result: ToolMessage | Command, runtime: ToolRuntime) -> ToolMessage | Command:
+        # 拦截工具结果：对单条 ToolMessage 或 Command 中的 ToolMessage 做大小检查并按需落盘
         if isinstance(tool_result, ToolMessage) and isinstance(tool_result.content, str):
             if not (self.tool_token_limit_before_evict and len(tool_result.content) > 4 * self.tool_token_limit_before_evict):
                 return tool_result

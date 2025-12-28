@@ -81,9 +81,9 @@ def create_deep_agent(
                 - (optional) `middleware` (list of AgentMiddleware)
         response_format: A structured output response format to use for the agent.
         context_schema: The schema of the deep agent.
-        checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persistent storage (required if backend uses StoreBackend).
-        backend: Optional backend for file storage and execution. Pass either a Backend instance
+        checkpointer: Optional checkpointer for persisting agent state between runs. 短期记忆
+        store: Optional store for persistent storage (required if backend uses StoreBackend). 长期记忆
+        backend: Optional backend for file storage and execution. Pass either a Backend instance  外存实现
             or a callable factory like `lambda rt: StateBackend(rt)`. For execution support,
             use a backend that implements SandboxBackendProtocol.
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
@@ -111,8 +111,11 @@ def create_deep_agent(
         keep = ("messages", 6)
 
     deepagent_middleware = [
-        TodoListMiddleware(),
+        # 规划todo
+        TodoListMiddleware(), 
+        # 文件操作、tool result写盘
         FilesystemMiddleware(backend=backend),
+        # 子agent隔离上下文
         SubAgentMiddleware(
             default_model=model,
             default_tools=tools,
@@ -132,18 +135,22 @@ def create_deep_agent(
             default_interrupt_on=interrupt_on,
             general_purpose_agent=True,
         ),
+        # 压缩上下文
         SummarizationMiddleware(
             model=model,
             trigger=trigger,
             keep=keep,
             trim_tokens_to_summarize=None,
         ),
+        # 开启LLM API Prefix Cache特性
         AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+        # 修复工具调用pair
         PatchToolCallsMiddleware(),
     ]
     if middleware:
         deepagent_middleware.extend(middleware)
     if interrupt_on is not None:
+        # Human-in-the-loop tool执行前确认机制
         deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
     return create_agent(
