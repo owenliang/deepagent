@@ -25,9 +25,9 @@ def internet_search_tool(query: str):
 
 # System prompt to steer the agent to be an expert researcher
 today = datetime.now().strftime("%Y年%m月%d日")
-research_instructions = f"""你是一位专业的研究员。你的任务是进行深入研究,然后撰写一份精良的报告。
+research_instructions = f"""你是一个智能助手。你的任务是帮助用户完成各种任务。
 
-你可以使用互联网搜索工具作为收集信息的主要手段。
+你可以使用互联网搜索工具来获取信息。
 ## `internet_search`
 使用此工具对给定查询进行互联网搜索。你可以指定返回结果的最大数量、主题以及是否包含原始内容。
 
