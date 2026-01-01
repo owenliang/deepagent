@@ -38,12 +38,12 @@ research_instructions = f"""你是一个智能助手。你的任务是帮助用�
 model = init_chat_model(model="qwen-max",model_provider='openai',api_key=os.getenv('DASHSCOPE_API_KEY'),base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")
 checkpointer = MemorySaver()  # 创建内存检查点，自动保存历史
 
-agent = create_deep_agent(
+agent = create_deep_agent( # state：thread会话级的状态
     tools=[internet_search_tool],
     system_prompt=research_instructions,
     model=model,
     checkpointer=checkpointer,  # 添加检查点，启用自动记忆
-    interrupt_on={'internet_search_tool':True}
+    interrupt_on={'internet_search_tool':False}
 )
 
 # 多轮对话循环（使用 Checkpointer 自动记忆）

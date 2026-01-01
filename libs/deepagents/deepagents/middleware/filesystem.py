@@ -899,7 +899,9 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Update the system prompt and filter tools based on backend capabilities.
+        """在模型调用前拦截：根据后端能力过滤工具并注入系统提示词。
+
+        Update the system prompt and filter tools based on backend capabilities.
 
         Args:
             request: The model request being processed.
@@ -908,6 +910,7 @@ class FilesystemMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
+        # 检查是否存在 execute 工具，以及后端是否支持执行
         # Check if execute tool is present and if backend supports it
         has_execute_tool = any((tool.name if hasattr(tool, "name") else tool.get("name")) == "execute" for tool in request.tools)
 
@@ -946,7 +949,9 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """(async) Update the system prompt and filter tools based on backend capabilities.
+        """在模型调用前拦截（异步版本）：根据后端能力过滤工具并注入系统提示词。
+
+        (async) Update the system prompt and filter tools based on backend capabilities.
 
         Args:
             request: The model request being processed.
@@ -955,6 +960,7 @@ class FilesystemMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
+        # 检查是否存在 execute 工具，以及后端是否支持执行
         # Check if execute tool is present and if backend supports it
         has_execute_tool = any((tool.name if hasattr(tool, "name") else tool.get("name")) == "execute" for tool in request.tools)
 
@@ -1068,7 +1074,9 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        """Check the size of the tool call result and evict to filesystem if too large.
+        """在工具调用后拦截：检查结果大小，过大则写入文件系统。
+
+        Check the size of the tool call result and evict to filesystem if too large.
 
         Args:
             request: The tool call request being processed.
@@ -1077,6 +1085,7 @@ class FilesystemMiddleware(AgentMiddleware):
         Returns:
             The raw ToolMessage, or a pseudo tool message with the ToolResult in state.
         """
+        # 如果未设置大小限制，或者是文件系统工具本身，则直接执行
         if self.tool_token_limit_before_evict is None or request.tool_call["name"] in TOOL_GENERATORS:
             return handler(request)
 
@@ -1088,7 +1097,9 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
-        """(async)Check the size of the tool call result and evict to filesystem if too large.
+        """在工具调用后拦截（异步版本）：检查结果大小，过大则写入文件系统。
+
+        (async)Check the size of the tool call result and evict to filesystem if too large.
 
         Args:
             request: The tool call request being processed.
