@@ -3,7 +3,8 @@ from datetime import datetime
 from deepagents import create_deep_agent
 from openai import OpenAI
 from langchain.chat_models import init_chat_model
-from langgraph.checkpoint.memory import MemorySaver  # 导入检查点工具
+from langgraph.checkpoint.memory import InMemorySaver, MemorySaver  # 导入检查点工具
+from deepagents.backends import StoreBackend
 
 def internet_search_tool(query: str):
     """Run a web search"""
@@ -49,7 +50,7 @@ agent = create_deep_agent( # state：thread会话级的状态
 # 多轮对话循环（使用 Checkpointer 自动记忆）
 printed_msg_ids = set()  # 跟踪已打印的消息ID
 thread_id = "user_session_001"  # 会话 ID，区分不同用户/会话
-config = {"configurable": {"thread_id": thread_id}}  # 配置会话
+config = {"configurable": {"thread_id": thread_id}, "metastore": {'assistant_id': 'owenliang'}}  # 配置会话
 
 print("开始对话（输入 'exit' 退出）：")
 while True:

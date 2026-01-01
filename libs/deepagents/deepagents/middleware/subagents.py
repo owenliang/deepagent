@@ -1,4 +1,10 @@
-"""Middleware for providing subagents to an agent via a `task` tool."""
+"""子代理中间件：通过 `task` 工具为主代理提供子代理能力
+
+核心功能：
+1. 允许主代理启动短生命周期的子代理来处理独立任务
+2. 支持并行执行多个子代理，提升效率
+3. 子代理拥有隔离的上下文，完成后返回精简结果
+"""
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, NotRequired, TypedDict, cast
@@ -15,12 +21,10 @@ from langgraph.types import Command
 
 
 class SubAgent(TypedDict):
-    """Specification for an agent.
+    """子代理配置规范
 
-    When specifying custom agents, the `default_middleware` from `SubAgentMiddleware`
-    will be applied first, followed by any `middleware` specified in this spec.
-    To use only custom middleware without the defaults, pass `default_middleware=[]`
-    to `SubAgentMiddleware`.
+    定义子代理的结构：名称、描述、系统提示词、工具集等
+    中间件应用顺序：default_middleware -> 自定义 middleware
     """
 
     name: str
@@ -46,24 +50,26 @@ class SubAgent(TypedDict):
 
 
 class CompiledSubAgent(TypedDict):
-    """A pre-compiled agent spec."""
+    """预编译的子代理规范（已编译为 Runnable）"""
 
     name: str
-    """The name of the agent."""
+    """代理名称"""
 
     description: str
-    """The description of the agent."""
+    """代理描述"""
 
     runnable: Runnable
-    """The Runnable to use for the agent."""
+    """可执行的 Runnable 实例"""
 
 
+# 默认子代理的系统提示词
 DEFAULT_SUBAGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
-# State keys that should be excluded when passing state to subagents
+# 传递给子代理时需要排除的状态键（避免上下文污染）
 _EXCLUDED_STATE_KEYS = ("messages", "todos")
 
-TASK_TOOL_DESCRIPTION = """Launch an ephemeral subagent to handle complex, multi-step independent tasks with isolated context windows.
+# Task 工具的详细描述文档（包含使用指南和示例）
+TASK_TOOL_DESCRIPTION = """启动临时子代理处理复杂的、多步骤的独立任务（带有隔离的上下文窗口）
 
 Available agent types and the tools they have access to:
 {available_agents}
@@ -173,7 +179,8 @@ Since the user is greeting, use the greeting-responder agent to respond with a f
 assistant: "I'm going to use the Task tool to launch with the greeting-responder agent"
 </example>"""  # noqa: E501
 
-TASK_SYSTEM_PROMPT = """## `task` (subagent spawner)
+# 主代理的系统提示词：指导何时以及如何使用 task 工具
+TASK_SYSTEM_PROMPT = """## `task`（子代理启动器）
 
 You have access to a `task` tool to launch short-lived subagents that handle isolated tasks. These agents are ephemeral — they live only for the duration of the task and return a single result.
 
@@ -202,6 +209,7 @@ When NOT to use the task tool:
 - You should use the `task` tool whenever you have a complex task that will take multiple steps, and is independent from other tasks that the agent needs to complete. These agents are highly competent and efficient."""  # noqa: E501
 
 
+# 默认通用子代理的描述（拥有与主代理相同的工具集）
 DEFAULT_GENERAL_PURPOSE_DESCRIPTION = "General-purpose agent for researching complex questions, searching for files and content, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. This agent has access to all tools as the main agent."  # noqa: E501
 
 
@@ -214,7 +222,9 @@ def _get_subagents(
     subagents: list[SubAgent | CompiledSubAgent],
     general_purpose_agent: bool,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Create subagent instances from specifications.
+    """从配置创建子代理实例
+
+    返回：(代理字典, 描述列表)
 
     Args:
         default_model: Default model for subagents that don't specify one.
@@ -230,13 +240,13 @@ def _get_subagents(
         Tuple of (agent_dict, description_list) where agent_dict maps agent names
         to runnable instances and description_list contains formatted descriptions.
     """
-    # Use empty list if None (no default middleware)
+    # 如果没有指定中间件，使用空列表
     default_subagent_middleware = default_middleware or []
 
-    agents: dict[str, Any] = {}
-    subagent_descriptions = []
+    agents: dict[str, Any] = {}  # 存储所有子代理的字典
+    subagent_descriptions = []  # 子代理的描述列表
 
-    # Create general-purpose agent if enabled
+    # 如果启用，创建通用子代理（拥有所有默认工具）
     if general_purpose_agent:
         general_purpose_middleware = [*default_subagent_middleware]
         if default_interrupt_on:
@@ -250,19 +260,24 @@ def _get_subagents(
         agents["general-purpose"] = general_purpose_subagent
         subagent_descriptions.append(f"- general-purpose: {DEFAULT_GENERAL_PURPOSE_DESCRIPTION}")
 
-    # Process custom subagents
+    # 处理自定义子代理配置
     for agent_ in subagents:
         subagent_descriptions.append(f"- {agent_['name']}: {agent_['description']}")
+        # 如果是预编译的子代理，直接使用
         if "runnable" in agent_:
             custom_agent = cast("CompiledSubAgent", agent_)
             agents[custom_agent["name"]] = custom_agent["runnable"]
             continue
+        # 获取工具集（未指定则使用默认工具）
         _tools = agent_.get("tools", list(default_tools))
 
+        # 获取模型（未指定则使用默认模型）
         subagent_model = agent_.get("model", default_model)
 
+        # 组装中间件：默认中间件 + 自定义中间件
         _middleware = [*default_subagent_middleware, *agent_["middleware"]] if "middleware" in agent_ else [*default_subagent_middleware]
 
+        # 如果配置了人机协作中断点，添加相应中间件
         interrupt_on = agent_.get("interrupt_on", default_interrupt_on)
         if interrupt_on:
             _middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
@@ -286,7 +301,9 @@ def _create_task_tool(
     general_purpose_agent: bool,
     task_description: str | None = None,
 ) -> BaseTool:
-    """Create a task tool for invoking subagents.
+    """创建用于调用子代理的 task 工具
+
+    这是主代理用来启动子代理的核心工具
 
     Args:
         default_model: Default model for subagents.
@@ -313,6 +330,7 @@ def _create_task_tool(
     subagent_description_str = "\n".join(subagent_descriptions)
 
     def _return_command_with_state_update(result: dict, tool_call_id: str) -> Command:
+        """返回子代理结果并更新状态（过滤掉排除的键）"""
         state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
         return Command(
             update={
@@ -322,18 +340,19 @@ def _create_task_tool(
         )
 
     def _validate_and_prepare_state(subagent_type: str, description: str, runtime: ToolRuntime) -> tuple[Runnable, dict]:
-        """Prepare state for invocation."""
+        """准备子代理的执行状态（创建干净的初始状态）"""
         subagent = subagent_graphs[subagent_type]
-        # Create a new state dict to avoid mutating the original
+        # 创建新状态字典，避免修改原始状态
         subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
+        # 将任务描述作为首条消息
         subagent_state["messages"] = [HumanMessage(content=description)]
         return subagent, subagent_state
 
-    # Use custom description if provided, otherwise use default template
+    # 如果未提供自定义描述，使用默认模板
     if task_description is None:
         task_description = TASK_TOOL_DESCRIPTION.format(available_agents=subagent_description_str)
     elif "{available_agents}" in task_description:
-        # If custom description has placeholder, format with agent descriptions
+        # 如果自定义描述包含占位符，填充代理描述
         task_description = task_description.format(available_agents=subagent_description_str)
 
     def task(
@@ -341,6 +360,7 @@ def _create_task_tool(
         subagent_type: str,
         runtime: ToolRuntime,
     ) -> str | Command:
+        """同步执行子代理任务"""
         if subagent_type not in subagent_graphs:
             allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
             return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
@@ -356,6 +376,7 @@ def _create_task_tool(
         subagent_type: str,
         runtime: ToolRuntime,
     ) -> str | Command:
+        """异步执行子代理任务"""
         if subagent_type not in subagent_graphs:
             allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
             return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
@@ -375,35 +396,25 @@ def _create_task_tool(
 
 
 class SubAgentMiddleware(AgentMiddleware):
-    """Middleware for providing subagents to an agent via a `task` tool.
+    """子代理中间件：为主代理提供子代理能力
 
-    This  middleware adds a `task` tool to the agent that can be used to invoke subagents.
-    Subagents are useful for handling complex tasks that require multiple steps, or tasks
-    that require a lot of context to resolve.
+    核心价值：
+    1. 任务隔离：每个子代理拥有独立的上下文窗口
+    2. 精简结果：处理完复杂任务后返回简洁摘要
+    3. 领域专精：不同子代理可配置不同的工具集和专业能力
+    4. 并行执行：支持同时启动多个子代理，加速任务完成
 
-    A chief benefit of subagents is that they can handle multi-step tasks, and then return
-    a clean, concise response to the main agent.
+    默认包含一个通用子代理，与主代理拥有相同工具，但上下文隔离。
 
-    Subagents are also great for different domains of expertise that require a narrower
-    subset of tools and focus.
-
-    This middleware comes with a default general-purpose subagent that can be used to
-    handle the same tasks as the main agent, but with isolated context.
-
-    Args:
-        default_model: The model to use for subagents.
-            Can be a LanguageModelLike or a dict for init_chat_model.
-        default_tools: The tools to use for the default general-purpose subagent.
-        default_middleware: Default middleware to apply to all subagents. If `None` (default),
-            no default middleware is applied. Pass a list to specify custom middleware.
-        default_interrupt_on: The tool configs to use for the default general-purpose subagent. These
-            are also the fallback for any subagents that don't specify their own tool configs.
-        subagents: A list of additional subagents to provide to the agent.
-        system_prompt: Full system prompt override. When provided, completely replaces
-            the agent's system prompt.
-        general_purpose_agent: Whether to include the general-purpose agent. Defaults to `True`.
-        task_description: Custom description for the task tool. If `None`, uses the
-            default description template.
+    参数说明：
+        default_model: 子代理使用的模型
+        default_tools: 通用子代理的工具集
+        default_middleware: 应用于所有子代理的默认中间件（None=不应用）
+        default_interrupt_on: 人机协作中断配置
+        subagents: 自定义子代理列表
+        system_prompt: 主代理的系统提示词（告知如何使用 task 工具）
+        general_purpose_agent: 是否包含通用子代理（默认 True）
+        task_description: task 工具的自定义描述
 
     Example:
         ```python
@@ -447,7 +458,7 @@ class SubAgentMiddleware(AgentMiddleware):
         general_purpose_agent: bool = True,
         task_description: str | None = None,
     ) -> None:
-        """Initialize the SubAgentMiddleware."""
+        """初始化子代理中间件"""
         super().__init__()
         self.system_prompt = system_prompt
         task_tool = _create_task_tool(
@@ -466,7 +477,7 @@ class SubAgentMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Update the system prompt to include instructions on using subagents."""
+        """拦截模型调用，向系统提示词中注入子代理使用指南"""
         if self.system_prompt is not None:
             system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
             return handler(request.override(system_prompt=system_prompt))
@@ -477,7 +488,7 @@ class SubAgentMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """(async) Update the system prompt to include instructions on using subagents."""
+        """（异步版本）拦截模型调用，向系统提示词中注入子代理使用指南"""
         if self.system_prompt is not None:
             system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
             return await handler(request.override(system_prompt=system_prompt))

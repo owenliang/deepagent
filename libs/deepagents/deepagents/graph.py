@@ -113,7 +113,7 @@ def create_deep_agent(
     deepagent_middleware = [
         # 规划todo
         TodoListMiddleware(), 
-        # 文件操作、tool result写盘
+        # 文件操作(ls,read,write,edit,grep,glob)、tool result写盘 
         FilesystemMiddleware(backend=backend),
         # 子agent隔离上下文
         SubAgentMiddleware(

@@ -385,7 +385,7 @@ def _read_file_tool_generator(
         limit: int = DEFAULT_READ_LIMIT,
     ) -> str:
         """Synchronous wrapper for read_file tool."""
-        resolved_backend = _get_backend(backend, runtime)
+        resolved_backend = _get_backend(backend, runtime) 
         file_path = _validate_path(file_path)
         return resolved_backend.read(file_path, offset=offset, limit=limit)
 
